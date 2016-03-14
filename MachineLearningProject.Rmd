@@ -1,0 +1,115 @@
+---
+title: "Practical Machine Learning"
+author: "Michael Addonisio"
+date: "March 13, 2016"
+output: html_document
+---
+##Backround
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Data
+
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+```{r, warning = FALSE, echo = FALSE, message = FALSE}
+library(readr)
+library(caret)
+library(rattle)
+library(doParallel)
+```
+
+#Data Cleaning and Exploration
+
+First we define and read in our datasets. 
+
+```{r, echo=TRUE}
+trainingurl = "pml-training.csv"
+validationurl = "pml-testing.csv"
+
+validation = read.csv(validationurl, na.strings=c("#DIV/0!", "NA","") )
+train = read.csv(trainingurl,  na.strings=c("#DIV/0!", "NA","") )
+```
+
+Looking at the dataset, you can see that there are many variables that are filled with NA values. These variables cannot contribute to the final prediction model. So for simplicity we premtively disqualify them as potential features to our model. 
+
+```{r, echo=TRUE}
+train.na = apply(train, 2, function (x) sum(is.na(x))/19622)
+train.na
+```
+
+Any variable with at least the arbitary cutoff of 50% NA values is removed. Also removed are variables that conceptually should have no relationship with your dependent variable 'classe', such as the user name and timestamp variables. 
+
+```{r, echo=FALSE}
+train.na = apply(train, 2, function (x) sum(is.na(x))/19622)
+NA.vars = which(train.na > .50)
+other.vars = which(names(train) %in% c('X', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp', 'new_window', 'num_window'))
+train = train[,-c(NA.vars, other.vars)]
+```
+
+I subset the dataset into a training and testing dataset. I used a standard 60% for the training dataset. I also set the seed number on the day I conducted the analysis 2/28/2016 for better reproducability of results. 
+
+```{r, echo=TRUE}
+set.seed(2282016)
+index = createDataPartition(train$classe, p=0.6, list = FALSE)
+training = train[index,]
+testing = train[-index,]
+```
+
+##Decision Tree Model
+
+Now that my dataset is properly munged and subsetted. I run the prediction analysis. I decide to first run a tree base model using the R package 'rpart' and 'caret'.  Once the model is defined, the r package 'rattle' is used to create a fancy decision tree of the model. 
+```{r, echo=FALSE}
+tree.model = train(classe ~ .,method="rpart",data=training)
+fancyRpartPlot(tree.model$finalModel, sub = "")
+```
+
+Looking at the model's accuracy we see we get an estimated 50% accuracy. We should be able to do much better than that.
+
+```{r, echo=FALSE}
+tree.prediction = predict(tree.model, testing)
+confusionMatrix(tree.prediction, testing$classe)
+```
+
+##Random Forest Model
+
+Next, we try to conduct a random forest model. These models are known to be highly accurate at the expense of speed so while it will take longer to calculate we should get a more better results. 
+
+To help with the speed, we set the controls to allow parallel processing.
+```{r, echo=TRUE}
+registerDoParallel()
+ctrl = trainControl(classProbs=TRUE, savePredictions=TRUE, allowParallel=TRUE, number = 5)
+```
+
+We run the model and test its accuracy on the testing dataset. We obtained a 99.1% accuracy with the random forest model. This is much better than the decision tree model. 
+
+```{r, echo=TRUE}
+rf.model = train(classe ~ ., method = "rf", data = training, trControl = ctrl)
+rf.prediction = predict(rf.model, testing)
+confusionMatrix(rf.prediction, testing$classe)
+```
+
+To gain a better understanding of which variables are important to the model and how it achieves it's high accuracy, we run caret's useful varImp function. We also plot the top 8 variables by 'classe' level.  Since the model only needs to be run once for one prediction, the whole model will be used for the final prediction. However, if speed and model simplicity were bigger factors, the variables shown would be great candidates to keep in the model. 
+
+```{r, echo=TRUE}
+var.imp = varImp(rf.model)
+var.imp
+plot(var.imp, top = 8)
+```
+
+##Conclusion: Final Prediction
+
+Finally we use the model to predict the 'classe' category in the validation dataset. We use the random forest model, as it was the most accurate. 
+
+```{r, echo=TRUE}
+predict(rf.model, validation)
+```
